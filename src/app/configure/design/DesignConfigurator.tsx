@@ -1,23 +1,33 @@
 "use client";
-
 import HandleComponent from "@/components/HandleComponent";
 import { AspectRatio } from "@/components/ui/aspect-ratio";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { cn } from "@/lib/utils";
-import NextImage from "next/image";
-import { Rnd } from "react-rnd";
-import { RadioGroup, Radio } from "@headlessui/react";
-import { useState } from "react";
-import { COLORS, MODEL } from "@/validators/option.validator";
-import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Button } from "@/components/ui/button";
-import { Check, ChevronDown } from "lucide-react";
+import { Label } from "@/components/ui/label";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { useToast } from "@/components/ui/use-toast";
+import { BASE_PRICE } from "@/config/products";
+import { useUploadThing } from "@/lib/uploadthing";
+import { cn, formatPrice } from "@/lib/utils";
+import {
+  COLORS,
+  FINISHES,
+  MATERIALS,
+  MODEL,
+} from "@/validators/option.validator";
+import { Description, Radio, RadioGroup } from "@headlessui/react";
+import { useMutation } from "@tanstack/react-query";
+import { ArrowRight, Check, ChevronDown } from "lucide-react";
+import NextImage from "next/image";
+import { useRouter } from "next/navigation";
+import { useRef, useState } from "react";
+import { Rnd } from "react-rnd";
+import { SaveConfigArgsType, saveConfig as _saveConfig } from "./actions";
 interface DesignConfigProps {
   configId: string;
   imageUrl: string;
@@ -31,12 +41,114 @@ const DesignConfigurator = ({
   const [options, setOptions] = useState<{
     color: (typeof COLORS)[number];
     model: (typeof MODEL.options)[number];
-  }>({ color: COLORS[0], model: MODEL.options[0] });
+    materials: (typeof MATERIALS.options)[number];
+    finish: (typeof FINISHES.options)[number];
+  }>({
+    color: COLORS[0],
+    model: MODEL.options[0],
+    materials: MATERIALS.options[0],
+    finish: FINISHES.options[0],
+  });
+  const router = useRouter();
+  const { toast } = useToast();
+  const { mutate: saveConfiguration } = useMutation({
+    mutationKey: ["save-config"],
+    mutationFn: async (args: SaveConfigArgsType) => {
+      await Promise.all([_saveConfig(args), saveConfig()]);
+    },
+    onError: () => {
+      toast({
+        title: "Something went wrong",
+        description: "There was an error on our end. Please try again",
+        variant: "destructive",
+      });
+    },
+    onSuccess: () => {
+      router.push(`/configure/preview?id=${configId}`);
+    },
+  });
+  const [renderedDimension, setRenderedDimension] = useState({
+    width: imageDimensions.width / 4,
+    height: imageDimensions.height / 4,
+  });
+
+  const [renderedPosition, setRenderedPosition] = useState({
+    x: 150,
+    y: 205,
+  });
+  const phoneCaseRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const { startUpload } = useUploadThing("imageUploader");
+  async function saveConfig() {
+    try {
+      const {
+        left: caseLeft,
+        top: caseTop,
+        width,
+        height,
+      } = phoneCaseRef.current!.getBoundingClientRect();
+
+      const { left: containerLeft, top: containerTop } =
+        containerRef.current!.getBoundingClientRect();
+
+      const leftOffset = caseLeft - containerLeft;
+      const topOffset = caseTop - containerTop;
+
+      const actualX = renderedPosition.x - leftOffset;
+      const actualY = renderedPosition.y - topOffset;
+
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+
+      const userImage = new Image();
+      userImage.crossOrigin = "anonymous";
+      userImage.src = imageUrl;
+      await new Promise((resolve) => {
+        userImage.onload = resolve;
+      });
+
+      ctx?.drawImage(
+        userImage,
+        actualX,
+        actualY,
+        renderedDimension.width,
+        renderedDimension.height
+      );
+      const base64 = canvas.toDataURL();
+      const base64Data = base64.split(",")[1];
+      const blob = base64ToBlob(base64Data, "image/png");
+      const file = new File([blob], "filename.png", { type: "image/png" });
+      await startUpload([file], { configId });
+    } catch (err) {
+      toast({
+        title: "Something went wrong",
+        description: "There was a problem saving your config, please try again",
+        variant: "destructive",
+      });
+    }
+  }
+
+  function base64ToBlob(base64: string, mimeType: string) {
+    const byteChars = atob(base64);
+    const byteNums = new Array(byteChars.length);
+    for (let i = 0; i < byteChars.length; i++) {
+      byteNums[i] = byteChars.charCodeAt(i);
+    }
+    const byteArray = new Uint8Array(byteNums);
+    return new Blob([byteArray], { type: mimeType });
+  }
+
   return (
-    <div className="relative mt-20 grid grid-cols-3 mb-20 pb-20">
-      <div className="relative h-[37.5rem] overflow-hidden col-span-2 w-full max-w-4xl flex items-center justify-center rounded-lg border-2 border-dashed border-zinc-300 p-12 text-center focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2">
+    <div className="relative mt-20 grid grid-cols-1 lg:grid-cols-3 mb-20 pb-20">
+      <div
+        ref={containerRef}
+        className="relative h-[37.5rem] overflow-hidden col-span-2 w-full max-w-4xl flex items-center justify-center rounded-lg border-2 border-dashed border-zinc-300 p-12 text-center focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
+      >
         <div className="relative w-60 bg-opacity-50 pointer-events-none aspect-[896/1831]">
           <AspectRatio
+            ref={phoneCaseRef}
             ratio={896 / 1831}
             className="pointer-events-none relative z-50 aspect-[896/1831] w-full"
           >
@@ -56,6 +168,17 @@ const DesignConfigurator = ({
           />
         </div>
         <Rnd
+          onResizeStop={(_, __, ref, ___, { x, y }) => {
+            setRenderedDimension({
+              height: parseInt(ref.style.height.slice(0, -2)),
+              width: parseInt(ref.style.width.slice(0, -2)),
+            });
+            setRenderedPosition({ x, y });
+          }}
+          onDragStop={(_, data) => {
+            const { x, y } = data;
+            setRenderedPosition({ x, y });
+          }}
           className="absolute z-20 border-[3px] border-primary"
           lockAspectRatio
           resizeHandleComponent={{
@@ -81,7 +204,7 @@ const DesignConfigurator = ({
           </div>
         </Rnd>
       </div>
-      <div className="h-[37.5rem] flex flex-col bg-white">
+      <div className="h-[37.5rem] flex flex-col bg-white col-span-full lg:col-span-1">
         <ScrollArea className="relative flex-1 overflow-auto">
           <div
             aria-hidden="true"
@@ -170,10 +293,97 @@ const DesignConfigurator = ({
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </div>
+                {[MATERIALS, FINISHES].map(
+                  ({ name, options: selectableOptions }) => (
+                    <RadioGroup
+                      key={name}
+                      value={options[name]}
+                      onChange={(val) => {
+                        setOptions((prev) => ({ ...prev, [name]: val }));
+                      }}
+                    >
+                      <Label>
+                        {name.slice(0, 1).toUpperCase() + name.slice(1)}
+                      </Label>
+                      <div className="mt-3 space-y-4">
+                        {selectableOptions.map((option) => (
+                          <Radio
+                            key={option.value}
+                            value={option}
+                            className={({ focus, checked }) =>
+                              cn(
+                                "relative block cursor-pointer rounded-lg bg-white px-6 py-4 shadow-sm border-2 border-zinc-200 focus:outline-none ring-0 focus:ring-0 outline-none sm:flex sm:justify-between",
+                                {
+                                  "border-primary": focus || checked,
+                                }
+                              )
+                            }
+                          >
+                            <span className="flex items-center">
+                              <span className="flex flex-col text-sm">
+                                {option.label}
+                                {option.description && (
+                                  <Description
+                                    as="span"
+                                    className="text-zinc-500"
+                                  >
+                                    <span className="block sm:inline">
+                                      {option.description}
+                                    </span>
+                                  </Description>
+                                )}
+                              </span>
+                            </span>
+                            <Description
+                              as="span"
+                              className="mt-2 flex text-sm sm:ml-4 sm:mt-0 sm:flex-col sm:text-right"
+                            >
+                              <span className="font-medium text-zinc-900">
+                                {formatPrice(option.price / 100)}
+                              </span>
+                            </Description>
+                          </Radio>
+                        ))}
+                      </div>
+                    </RadioGroup>
+                  )
+                )}
               </div>
             </div>
           </div>
         </ScrollArea>
+
+        <div className="w-full px-8 h-16 bg-white">
+          <div className="h-px w-full bg-zinc-200" />
+          <div className="w-full h-full flex justify-end items-center">
+            <div className="w-full flex gap-6 items-center">
+              <p className="font-medium whitespace-nowrap">
+                {formatPrice(
+                  (BASE_PRICE +
+                    options.finish.price +
+                    options.materials.price) /
+                    100
+                )}
+              </p>
+              <Button
+                onClick={() =>
+                  saveConfiguration({
+                    configId,
+                    color: options.color.value,
+                    finish: options.finish.value,
+                    material: options.materials.value,
+                    model: options.model.value,
+                  })
+                }
+                size="sm"
+                className="w-full"
+              >
+                Continue
+                <ArrowRight className="h-4 w-4 ml-1.5 inline" />
+              </Button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
